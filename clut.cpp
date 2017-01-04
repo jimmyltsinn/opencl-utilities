@@ -7,6 +7,7 @@
 //
 
 #include <iostream>
+#include <cstring>
 
 #include "clut.h"
 
@@ -27,6 +28,18 @@ const char* clErrorString(cl_int err) {
         case CL_IMAGE_FORMAT_NOT_SUPPORTED:         return "Image format not supported";
         case CL_BUILD_PROGRAM_FAILURE:              return "Build program failure";
         case CL_MAP_FAILURE:                        return "Map failure";
+            
+        case CL_MISALIGNED_SUB_BUFFER_OFFSET:       return "Misaligned sub-buffer offset";
+        case CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST:
+                                                    return "Execution status error for events in wait list";
+#ifdef CL_VERSION_1_2
+        case CL_COMPILE_PROGRAM_FAILURE:            return "Compile program failure";
+        case CL_LINKER_NOT_AVAILABLE:               return "Linker not available";
+        case CL_LINK_PROGRAM_FAILURE:               return "Link program failure";
+        case CL_DEVICE_PARTITION_FAILED:            return "Device partition failed";
+        case CL_KERNEL_ARG_INFO_NOT_AVAILABLE:      return "Kernel argument information not available";
+#endif
+            
         case CL_INVALID_VALUE:                      return "Invalid value";
         case CL_INVALID_DEVICE_TYPE:                return "Invalid device type";
         case CL_INVALID_PLATFORM:                   return "Invalid platform";
@@ -61,12 +74,20 @@ const char* clErrorString(cl_int err) {
         case CL_INVALID_BUFFER_SIZE:                return "Invalid buffer size";
         case CL_INVALID_MIP_LEVEL:                  return "Invalid MIP level";
         case CL_INVALID_GLOBAL_WORK_SIZE:           return "Invalid global work size";
+            
+        case CL_INVALID_PROPERTY:                   return "Invalid property";
+
+#ifdef CL_VERSION_1_2
+        case CL_INVALID_IMAGE_DESCRIPTOR:           return "Invalid image descriptor";
+        case CL_INVALID_COMPILER_OPTIONS:           return "Invalid compiler options";
+        case CL_INVALID_LINKER_OPTIONS:             return "Invalid linker options";
+        case CL_INVALID_DEVICE_PARTITION_COUNT:     return "Invalid device partition count";
+#endif
         default:                                    return "Unknown error";
     }
 }
 
 void __clperror(const char *str, cl_int err) {
-    // if (err != CL_SUCCESS)
     cerr << str << ": " << clErrorString(err) << "\n";
 }
 
@@ -79,6 +100,8 @@ void printPlatformInfo(cl_platform_id id) {
         CL_PLATFORM_EXTENSIONS
     };
     
+    cout << "-- CL Platform Info --\n";
+
     const char str[][50] = {
         "Platform: ",
         "\tPlatform Profile",
@@ -123,7 +146,10 @@ void printDeviceInfo(cl_device_id device) {
     cl_int err;
     cl_device_type t;
     
+    cout << "-- CL Device Info --\n";
+
     err = clGetDeviceInfo(device, CL_DEVICE_NAME, sizeof(buf), &buf, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << buf << '\n';
     
     buf[0] = 0;
@@ -144,21 +170,27 @@ void printDeviceInfo(cl_device_id device) {
     cout << '\n';
     
     err = clGetDeviceInfo(device, CL_DEVICE_VENDOR, sizeof(buf), &buf, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DEVICE_VENDOR: " << buf << '\n';
     
     err = clGetDeviceInfo(device, CL_DRIVER_VERSION, sizeof(buf), &buf, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DRIVER_VERSION: " << buf << '\n';
     
     err = clGetDeviceInfo(device, CL_DEVICE_VERSION, sizeof(buf), &buf, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DEVICE_VERSION: " << buf << '\n';
     
     err = clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(i), &i, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DEVICE_MAX_COMPUTE_UNIT: " << i << '\n';
     
     err = clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(i), &i, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DEVICE_MAX_CLOCK_FREQUENCY: " << i << '\n';
     
     err = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(s), &s, NULL);
+    clperror("clGetDeviceInfo()", err);
     cout << "\tCL_DEVICE_MAX_WORK_GROUP_SIZE: " << s << '\n';
     
     //    err = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, sizeof(i), &i, NULL);
@@ -186,6 +218,7 @@ int clGetPlatforms(cl_platform_id **out, bool print) {
         
         platformIds = (cl_platform_id *) malloc(ret * sizeof(cl_platform_id));
         err = clGetPlatformIDs(ret, platformIds, NULL);
+        clperror("clGetPlatformIDs()", err);
         
         if (print) {
             for (int i = 0; i < ret; ++i) {
@@ -221,7 +254,19 @@ int clGetDevices(cl_platform_id platform, cl_device_id **out, cl_device_type typ
     return ret;
 }
 
-const char *readProgramSource(const char *filename, int maxSize) {
+int clGetDeviceNum(int platformId, cl_device_type type) {
+    cl_int err;
+    cl_uint ret;
+    cl_platform_id *platforms;
+    clGetPlatforms(&platforms);
+    
+    err = clGetDeviceIDs(platforms[platformId], type, 0, NULL, &ret);
+    clperror("clGetDeviceIDs", err);
+
+    return ret;
+}
+
+char *readProgramSource(const char *filename, int maxSize) {
     FILE *fp = fopen(filename, "r");
     
     if (!fp) {
@@ -264,17 +309,56 @@ void clPrintBuildInfo(cl_program program, cl_device_id device) {
         char *buffer = (char *) malloc(sizeof(char) * size);
         clErr = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, size, buffer, &length);
         if (!clErr)
-            cerr << buffer << '\n';
+            if (strlen(buffer) > 1) // Avoid print empty line when no message
+                cerr << buffer << '\n';
         free(buffer);
     } while (clErr);
 }
 
 void clPrintDeviceMemoryInfo(cl_device_id device) {
+    cout << "-- CL Device Memory Info --\n";
+
     cl_ulong val;
     clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(val), &val, NULL);
-    std::cout << "Global Memory: " << val / 1024 / 1024 << " MB\n";
+    cout << "\tGlobal Memory: " << val / 1024 / 1024 << " MB\n";
     clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(val), &val, NULL);
-    std::cout << "Local Memory: " << val / 1024 << " KB\n";
+    cout << "\tLocal Memory: " << val / 1024 << " KB\n";
     clGetDeviceInfo(device, CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE, sizeof(val), &val, NULL);
-    std::cout << "Constant Memory: " << val / 1024 << " KB\n";
+    cout << "\tConstant Memory: " << val / 1024 << " KB\n";
 }
+
+cl_program clCompileProgramFromSource(cl_context context, cl_device_id device, const char *src) {
+    cl_program ret = NULL;
+    cl_int clErr;
+    
+    ret = clCreateProgramWithSource(context, 1, &src, NULL, &clErr);
+    
+    if (clErr != CL_SUCCESS) {
+        clperror("clCreateProgramWithSource()", clErr);
+        return NULL;
+    }
+    
+    clErr = clBuildProgram(ret, 1, &device, NULL, NULL, NULL);
+    
+    clPrintBuildInfo(ret, device);
+    
+    if (clErr != CL_SUCCESS) {
+        clperror("clBuildProgram()", clErr);
+//        clPrintBuildInfo(ret, device);
+        return NULL;
+    }
+    
+    return ret;
+}
+
+cl_program clCompileProgramFromFile(cl_context context, cl_device_id device, const char *filename) {
+    cl_program ret = NULL;
+    char *src = readProgramSource(filename);
+    
+    ret = clCompileProgramFromSource(context, device, src);
+    
+    free(src);
+    
+    return ret;
+}
+
